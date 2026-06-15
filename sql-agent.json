@@ -1,0 +1,364 @@
+{
+  "name": "SQL Agent",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "slack-events",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-node",
+      "name": "Slack Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [200, 300],
+      "webhookId": "slack-events"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-url-verification",
+              "leftValue": "={{ $json.body.type }}",
+              "rightValue": "url_verification",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-verification",
+      "name": "Is URL Verification?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [420, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"challenge\": $json.body.challenge } }}",
+        "options": {}
+      },
+      "id": "respond-challenge",
+      "name": "Respond Challenge",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [640, 180]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"ok\": true } }}",
+        "options": {}
+      },
+      "id": "respond-ack",
+      "name": "Acknowledge Slack",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [640, 420]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-message",
+              "leftValue": "={{ $json.body.event.type }}",
+              "rightValue": "message",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "not-bot",
+              "leftValue": "={{ $json.body.event.bot_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "empty",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "has-text",
+              "leftValue": "={{ $json.body.event.text }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "filter-messages",
+      "name": "Filter Valid Messages",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [860, 420]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "user-question",
+              "name": "user_question",
+              "value": "={{ $json.body.event.text }}",
+              "type": "string"
+            },
+            {
+              "id": "channel",
+              "name": "channel",
+              "value": "={{ $json.body.event.channel }}",
+              "type": "string"
+            },
+            {
+              "id": "user",
+              "name": "user",
+              "value": "={{ $json.body.event.user }}",
+              "type": "string"
+            },
+            {
+              "id": "attempt",
+              "name": "attempt",
+              "value": "=1",
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "extract-data",
+      "name": "Extract Question",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1080, 340]
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "You are a SQL expert for a PostgreSQL database with the Northwind schema.\n\nSCHEMA:\n- customers(customer_id, company_name, contact_name, country, city)\n- orders(order_id, customer_id, employee_id, order_date, ship_country, ship_city)\n- order_details(order_id, product_id, unit_price, quantity, discount)\n- products(product_id, product_name, category_id, unit_price, units_in_stock, discontinued)\n- categories(category_id, category_name, description)\n- employees(employee_id, first_name, last_name, title, country, hire_date)\n- suppliers(supplier_id, company_name, country)\n- shippers(shipper_id, company_name)\n\nRULES:\n1. Output ONLY valid JSON in this exact format: {\"sql\": \"...\", \"explanation\": \"...\"}\n2. ONLY SELECT queries. Never DROP, DELETE, UPDATE, INSERT, ALTER, TRUNCATE.\n3. Always add LIMIT 100 unless the user asks for more.\n4. Use proper JOINs with table aliases, never SELECT *.\n5. For revenue calculations: SUM(od.unit_price * od.quantity * (1 - od.discount))\n6. If the question is ambiguous, make a reasonable assumption and note it in explanation.",
+              "role": "system"
+            },
+            {
+              "content": "={{ $json.user_question }}"
+            }
+          ]
+        },
+        "jsonOutput": true,
+        "options": {}
+      },
+      "id": "sql-generator",
+      "name": "SQL Generator",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.6,
+      "position": [1300, 340]
+    },
+    {
+      "parameters": {
+        "jsCode": "const aiResponse = $input.first().json;\n\nlet content = aiResponse.message?.content \n  || aiResponse.choices?.[0]?.message?.content \n  || aiResponse.content\n  || aiResponse.text\n  || aiResponse;\n\nlet parsed;\nif (typeof content === 'object' && content !== null && content.sql) {\n  parsed = content;\n} else {\n  let str = typeof content === 'string' ? content : JSON.stringify(content);\n  str = str.replace(/```json\\s*/gi, '').replace(/```\\s*/g, '').trim();\n  \n  try {\n    parsed = JSON.parse(str);\n  } catch (e) {\n    if (str.toLowerCase().startsWith('select') || str.toLowerCase().startsWith('with')) {\n      parsed = { sql: str, explanation: 'Raw SQL returned' };\n    } else {\n      throw new Error('Cannot parse LLM response: ' + str.substring(0, 300));\n    }\n  }\n}\n\nconst sql = (parsed.sql || '').trim();\n\nif (!sql) {\n  throw new Error('No SQL in response: ' + JSON.stringify(parsed).substring(0, 300));\n}\n\nconst sqlLower = sql.toLowerCase();\nconst forbidden = ['drop', 'delete', 'update', 'insert', 'alter', 'truncate', 'create', 'grant', 'revoke'];\nfor (const word of forbidden) {\n  if (new RegExp(`\\\\b${word}\\\\b`).test(sqlLower)) {\n    throw new Error(`Query rejected: forbidden keyword \"${word}\"`);\n  }\n}\n\nif (!sqlLower.startsWith('select') && !sqlLower.startsWith('with')) {\n  throw new Error('Query must start with SELECT or WITH. Got: ' + sql.substring(0, 200));\n}\n\nreturn [{\n  json: {\n    sql: sql,\n    explanation: parsed.explanation || '',\n    user_question: $('Extract Question').first().json.user_question,\n    channel: $('Extract Question').first().json.channel,\n    attempt: $('Extract Question').first().json.attempt\n  }\n}];"
+      },
+      "id": "sql-validator",
+      "name": "SQL Validator",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1520, 340]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.sql }}",
+        "options": {}
+      },
+      "id": "execute-sql",
+      "name": "Execute SQL",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1740, 340],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst firstItem = items[0]?.json;\n\nconst validator = $('SQL Validator').first().json;\n\nif (firstItem?.error || (items.length === 1 && firstItem?.error !== undefined)) {\n  return [{\n    json: {\n      success: false,\n      error: firstItem.error || 'Unknown SQL error',\n      sql: validator.sql,\n      user_question: validator.user_question,\n      channel: validator.channel,\n      attempt: validator.attempt\n    }\n  }];\n}\n\nconst rows = items.map(i => i.json).filter(r => r && !r.error);\nconst explanation = validator.explanation;\n\nif (rows.length === 0) {\n  return [{\n    json: {\n      success: true,\n      text: `Query ran but returned no results.\\n\\n_${explanation}_`,\n      rows: [],\n      channel: validator.channel,\n      sql: validator.sql\n    }\n  }];\n}\n\nconst headers = Object.keys(rows[0]);\nlet table = '```\\n';\ntable += headers.join(' | ') + '\\n';\ntable += headers.map(() => '---').join(' | ') + '\\n';\nrows.slice(0, 10).forEach(row => {\n  table += headers.map(h => {\n    const v = row[h];\n    if (v === null) return 'NULL';\n    if (typeof v === 'number') return Number.isInteger(v) ? String(v) : v.toFixed(2);\n    return String(v).slice(0, 30);\n  }).join(' | ') + '\\n';\n});\ntable += '```';\n\nconst text = `*Results* (${rows.length} rows)\\n\\n${table}\\n\\n_${explanation}_`;\n\nreturn [{\n  json: {\n    success: true,\n    text,\n    rows,\n    channel: validator.channel,\n    sql: validator.sql\n  }\n}];"
+      },
+      "id": "format-results",
+      "name": "Format Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1960, 340]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-success",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-success",
+      "name": "Success?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2180, 340]
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "You are fixing a failed SQL query for the Northwind PostgreSQL database.\n\nSCHEMA:\n- customers(customer_id, company_name, contact_name, country, city)\n- orders(order_id, customer_id, employee_id, order_date, ship_country, ship_city)\n- order_details(order_id, product_id, unit_price, quantity, discount)\n- products(product_id, product_name, category_id, unit_price, units_in_stock, discontinued)\n- categories(category_id, category_name, description)\n- employees(employee_id, first_name, last_name, title, country, hire_date)\n\nOutput ONLY valid JSON: {\"sql\": \"...\", \"explanation\": \"what you fixed\"}\nOnly SELECT queries. Add LIMIT 100.",
+              "role": "system"
+            },
+            {
+              "content": "=Original question: {{ $json.user_question }}\nFailed SQL: {{ $json.sql }}\nError: {{ $json.error }}\n\nFix the SQL. Output only JSON."
+            }
+          ]
+        },
+        "jsonOutput": true,
+        "options": {}
+      },
+      "id": "sql-fixer",
+      "name": "SQL Fixer",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.6,
+      "position": [2400, 480]
+    },
+    {
+      "parameters": {
+        "jsCode": "const currentAttempt = $('Format Results').first().json.attempt || 1;\n\nif (currentAttempt >= 3) {\n  return [{\n    json: {\n      success: true,\n      text: `Sorry, I couldn't generate a valid query after 3 attempts.\\n\\nLast error: ${$('Format Results').first().json.error}`,\n      rows: [],\n      channel: $('Format Results').first().json.channel,\n      sql: $('Format Results').first().json.sql,\n      giveUp: true\n    }\n  }];\n}\n\nconst aiResponse = $input.first().json;\nlet content = aiResponse.message?.content \n  || aiResponse.choices?.[0]?.message?.content \n  || aiResponse.content\n  || aiResponse;\n\nlet parsed;\ntry {\n  parsed = typeof content === 'string' ? JSON.parse(content) : content;\n} catch (e) {\n  throw new Error('Fixer did not return valid JSON');\n}\n\nreturn [{\n  json: {\n    sql: parsed.sql,\n    explanation: parsed.explanation,\n    user_question: $('Format Results').first().json.user_question,\n    channel: $('Format Results').first().json.channel,\n    attempt: currentAttempt + 1\n  }\n}];"
+      },
+      "id": "process-fix",
+      "name": "Process Fix",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2620, 480]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst rows = data.rows || [];\n\nif (rows.length < 3) {\n  return [{ json: { ...data, chartUrl: null } }];\n}\n\nconst headers = Object.keys(rows[0]);\nconst valueKey = headers.find(h => typeof rows[0][h] === 'number' && h !== headers[0]);\n\nif (!valueKey) {\n  return [{ json: { ...data, chartUrl: null } }];\n}\n\nconst labelKey = headers[0];\n\nconst config = {\n  type: 'bar',\n  data: {\n    labels: rows.slice(0, 15).map(r => String(r[labelKey]).slice(0, 20)),\n    datasets: [{\n      label: valueKey,\n      data: rows.slice(0, 15).map(r => r[valueKey]),\n      backgroundColor: '#4F46E5'\n    }]\n  },\n  options: {\n    title: { display: true, text: `${valueKey} by ${labelKey}` },\n    legend: { display: false }\n  }\n};\n\nconst chartUrl = `https://quickchart.io/chart?c=${encodeURIComponent(JSON.stringify(config))}&width=600&height=400&backgroundColor=white`;\n\nreturn [{ json: { ...data, chartUrl } }];"
+      },
+      "id": "build-chart",
+      "name": "Build Chart",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2400, 240]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://slack.com/api/chat.postMessage",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.chartUrl ? JSON.stringify({ channel: $json.channel, text: $json.text, blocks: [ { type: 'section', text: { type: 'mrkdwn', text: $json.text } }, { type: 'image', image_url: $json.chartUrl, alt_text: 'chart' } ] }) : JSON.stringify({ channel: $json.channel, text: $json.text, mrkdwn: true }) }}",
+        "options": {}
+      },
+      "id": "send-slack",
+      "name": "Send to Slack",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2620, 240]
+    }
+  ],
+  "connections": {
+    "Slack Webhook": {
+      "main": [[{ "node": "Is URL Verification?", "type": "main", "index": 0 }]]
+    },
+    "Is URL Verification?": {
+      "main": [
+        [{ "node": "Respond Challenge", "type": "main", "index": 0 }],
+        [{ "node": "Acknowledge Slack", "type": "main", "index": 0 }]
+      ]
+    },
+    "Acknowledge Slack": {
+      "main": [[{ "node": "Filter Valid Messages", "type": "main", "index": 0 }]]
+    },
+    "Filter Valid Messages": {
+      "main": [[{ "node": "Extract Question", "type": "main", "index": 0 }]]
+    },
+    "Extract Question": {
+      "main": [[{ "node": "SQL Generator", "type": "main", "index": 0 }]]
+    },
+    "SQL Generator": {
+      "main": [[{ "node": "SQL Validator", "type": "main", "index": 0 }]]
+    },
+    "SQL Validator": {
+      "main": [[{ "node": "Execute SQL", "type": "main", "index": 0 }]]
+    },
+    "Execute SQL": {
+      "main": [[{ "node": "Format Results", "type": "main", "index": 0 }]]
+    },
+    "Format Results": {
+      "main": [[{ "node": "Success?", "type": "main", "index": 0 }]]
+    },
+    "Success?": {
+      "main": [
+        [{ "node": "Build Chart", "type": "main", "index": 0 }],
+        [{ "node": "SQL Fixer", "type": "main", "index": 0 }]
+      ]
+    },
+    "SQL Fixer": {
+      "main": [[{ "node": "Process Fix", "type": "main", "index": 0 }]]
+    },
+    "Process Fix": {
+      "main": [[{ "node": "Execute SQL", "type": "main", "index": 0 }]]
+    },
+    "Build Chart": {
+      "main": [[{ "node": "Send to Slack", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
