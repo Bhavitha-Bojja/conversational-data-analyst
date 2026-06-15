@@ -1,0 +1,35 @@
+# Data directories - never commit
+pgdata/
+n8n_data/
+
+# Environment & secrets
+.env
+.env.local
+*.key
+credentials.json
+*.token
+
+# Large data files (fetched at setup)
+init/northwind.sql
+init/*.sql
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Logs
+*.log
+npm-debug.log*
+
+# ngrok binary
+ngrok
+ngrok.exe
+
+# Backups
+*.bak
+*~
